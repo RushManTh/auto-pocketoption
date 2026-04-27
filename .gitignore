@@ -1,0 +1,11 @@
+node_modules
+.next
+.next-prod
+.env
+.env.local
+.env.*.local
+coverage
+playwright/pocket-option/profile
+test-results
+prisma/dev.db
+*.log

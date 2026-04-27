@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model TelegramMessage {
+  id                String   @id @default(cuid())
+  telegramMessageId String
+  channelId         String
+  text              String
+  rawPayload        String?
+  messageDate       DateTime
+  createdAt         DateTime @default(now())
+
+  signals Signal[]
+
+  @@unique([telegramMessageId, channelId])
+}
+
+model Signal {
+  id                String    @id @default(cuid())
+  telegramMessageId String?
+  telegramMessage   TelegramMessage? @relation(fields: [telegramMessageId], references: [id])
+  asset             String?
+  direction         String?
+  expirySeconds     Int?
+  candleSeconds     Int?
+  waitForGo         Boolean   @default(false)
+  martingale        Boolean   @default(false)
+  status            String    @default("IDLE")
+  confidence        Float     @default(0)
+  sourceText        String
+  goMessageId       String?
+  goReceivedAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tradeIntents TradeIntent[]
+}
+
+model TradeIntent {
+  id             String       @id @default(cuid())
+  signalId       String
+  signal         Signal       @relation(fields: [signalId], references: [id])
+  asset          String
+  direction      String
+  amount         Float
+  expirySeconds  Int
+  mode           String
+  executeAt      DateTime
+  status         String       @default("PENDING")
+  riskAllowed    Boolean      @default(false)
+  riskReason     String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  orders Order[]
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  tradeIntentId  String
+  tradeIntent    TradeIntent @relation(fields: [tradeIntentId], references: [id])
+  broker         String
+  brokerOrderRef String?
+  asset          String
+  direction      String
+  amount         Float
+  expirySeconds  Int
+  openedAt       DateTime?
+  closedAt       DateTime?
+  status         String      @default("CREATED")
+  result         String?
+  profitLoss     Float?
+  executorLog    String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  eventType  String
+  entityType String
+  entityId   String
+  message    String
+  metadata   String?
+  createdAt  DateTime @default(now())
+}
