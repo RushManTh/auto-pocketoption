@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { closeAssetPicker, closePromotionalModals } from "./actions";
+import { closeAssetPicker, closePromotionalModals, isPromotionalModalText } from "./actions";
 import { pocketOptionSelectors } from "./selectors";
 
 export type GuardInput = {
@@ -77,7 +77,12 @@ async function readBlockingModalText(page: Page) {
       continue;
     }
 
-    return (await modal.textContent().catch(() => "Blocking modal"))?.replace(/\s+/g, " ").trim().slice(0, 160) || "Blocking modal";
+    const text = (await modal.textContent().catch(() => "Blocking modal"))?.replace(/\s+/g, " ").trim() || "Blocking modal";
+    if (isPromotionalModalText(text)) {
+      continue;
+    }
+
+    return text.slice(0, 160);
   }
 
   return null;

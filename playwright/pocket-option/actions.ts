@@ -1,6 +1,9 @@
 import type { Locator, Page } from "playwright";
 import { pocketOptionSelectors } from "./selectors";
 
+const PROMOTIONAL_MODAL_TEXT_PATTERN =
+  /Welcome Bonus|deposit bonus|successful trades|Your deposit bonus|Congratulations!|maximum bonus|first deposit|financial success|Continue your journey/i;
+
 export async function openCabinet(page: Page, baseUrl: string) {
   await page.goto(baseUrl, {
     waitUntil: "domcontentloaded",
@@ -261,7 +264,7 @@ async function hidePromotionalModal(page: Page) {
       (() => {
         const modals = Array.from(document.querySelectorAll(".modal"));
         for (const modal of modals) {
-          if (!/Welcome Bonus|deposit bonus|successful trades|Your deposit bonus/i.test(modal.textContent || "")) {
+          if (!${PROMOTIONAL_MODAL_TEXT_PATTERN}.test(modal.textContent || "")) {
             continue;
           }
 
@@ -287,7 +290,7 @@ async function findVisiblePromotionalModal(page: Page): Promise<Locator | null> 
     }
 
     const text = await modal.textContent().catch(() => "");
-    if (/Welcome Bonus|deposit bonus|successful trades|Your deposit bonus/i.test(text ?? "")) {
+    if (isPromotionalModalText(text)) {
       return modal;
     }
   }
@@ -301,4 +304,8 @@ function formatDuration(seconds: number) {
   const remainingSeconds = seconds % 60;
 
   return [hours, minutes, remainingSeconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+export function isPromotionalModalText(text: string | null | undefined) {
+  return PROMOTIONAL_MODAL_TEXT_PATTERN.test(text ?? "");
 }
