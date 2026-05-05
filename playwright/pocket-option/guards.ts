@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { closeAssetPicker, closePromotionalModals, isPromotionalModalText } from "./actions";
+import { assetMatchesExpected, closeAssetPicker, closePromotionalModals, isPromotionalModalText } from "./actions";
 import { pocketOptionSelectors } from "./selectors";
 
 export type GuardInput = {
@@ -36,7 +36,7 @@ export async function validateBeforeClick(page: Page, input: GuardInput): Promis
   }
 
   const currentAsset = await readText(page, pocketOptionSelectors.currentAsset);
-  if (currentAsset && !normalizeAssetText(currentAsset).includes(normalizeAssetText(input.expectedAsset))) {
+  if (currentAsset && !assetMatchesExpected(currentAsset, input.expectedAsset)) {
     return fail(`Asset mismatch: expected ${input.expectedAsset}, saw ${currentAsset}`);
   }
 
@@ -86,10 +86,6 @@ async function readBlockingModalText(page: Page) {
   }
 
   return null;
-}
-
-function normalizeAssetText(value: string) {
-  return value.replace(/\s+/g, "").toUpperCase();
 }
 
 function expiryMatches(value: string, expectedSeconds: number) {

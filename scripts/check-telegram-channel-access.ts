@@ -32,6 +32,8 @@ type TargetChannel = {
   configured: string;
   peerId: string;
   lastMessageId: number;
+  canUseChannelDifference: boolean;
+  nextHistoryPollAt: number;
   pts?: number;
 };
 
@@ -63,9 +65,9 @@ async function main() {
 
     for (const channel of options.channels) {
       const peerId = await client.getPeerId(channel);
-      const pts = await readChannelPts(client, peerId);
-
       const entity = (await client.getEntity(channel)) as TelegramEntitySummary;
+      const canUseChannelDifference = entity.className === "Channel";
+      const pts = canUseChannelDifference ? await readChannelPts(client, peerId) : undefined;
       console.log(
         JSON.stringify(
           {
@@ -89,6 +91,8 @@ async function main() {
         configured: channel,
         peerId,
         lastMessageId,
+        canUseChannelDifference,
+        nextHistoryPollAt: 0,
         pts
       });
 
@@ -288,11 +292,16 @@ async function pollForNewMessages(client: TelegramClient, targets: TargetChannel
   let received = 0;
 
   for (const target of targets) {
-    if (target.pts !== undefined) {
+    if (target.canUseChannelDifference && target.pts !== undefined) {
       received += await pollChannelDifference(client, target, seen);
       continue;
     }
 
+    if (Date.now() < target.nextHistoryPollAt) {
+      continue;
+    }
+
+    target.nextHistoryPollAt = Date.now() + 5_000;
     const messages = await client.getMessages(target.configured, { limit: 10 });
     received += await reportNewMessages(messages, target, seen, "poll_message");
   }

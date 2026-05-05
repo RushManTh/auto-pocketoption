@@ -79,7 +79,7 @@ export function isDemoAccount(accountModeText: string) {
 export async function selectAsset(page: Page, asset: string) {
   const currentAsset = await page.locator(pocketOptionSelectors.currentAsset).first().innerText().catch(() => "");
 
-  if (normalize(currentAsset).includes(normalize(asset))) {
+  if (assetMatchesExpected(currentAsset, asset)) {
     await closeAssetPicker(page);
     return;
   }
@@ -98,7 +98,7 @@ export async function selectAsset(page: Page, asset: string) {
   await closeAssetPicker(page);
 
   const updatedAsset = await readCurrentAsset(page);
-  if (!normalize(updatedAsset).includes(normalize(asset))) {
+  if (!assetMatchesExpected(updatedAsset, asset)) {
     throw new Error(`Could not select asset ${asset}. Current asset: ${updatedAsset || "unknown"}`);
   }
 }
@@ -214,29 +214,12 @@ function normalize(value: string) {
 }
 
 async function clickAssetOption(page: Page, asset: string) {
-  const modalOption = page.locator(`.ReactModalPortal ${pocketOptionSelectors.assetOption}`, { hasText: asset }).first();
-
-  if (await modalOption.isVisible().catch(() => false)) {
-    await modalOption.click({ timeout: 3_000 }).catch(async () => {
-      await modalOption.click({ force: true, timeout: 3_000 });
-    });
-    return;
-  }
-
-  const option = page.locator(pocketOptionSelectors.assetOption, { hasText: asset }).first();
-  if (await option.isVisible().catch(() => false)) {
-    await option.click({ timeout: 3_000 }).catch(async () => {
-      await option.click({ force: true, timeout: 3_000 });
-    });
-    return;
-  }
-
   const options = page.locator(`.ReactModalPortal ${pocketOptionSelectors.assetOption}, ${pocketOptionSelectors.assetOption}`);
   const count = await options.count().catch(() => 0);
   for (let index = 0; index < count; index += 1) {
     const candidate = options.nth(index);
     const text = await candidate.textContent().catch(() => "");
-    if (!normalize(text ?? "").includes(normalize(asset))) {
+    if (!assetMatchesExpected(text ?? "", asset)) {
       continue;
     }
 
@@ -246,6 +229,26 @@ async function clickAssetOption(page: Page, asset: string) {
   }
 
   throw new Error(`Asset option ${asset} was not found in Pocket Option asset picker`);
+}
+
+export function assetMatchesExpected(candidate: string | null | undefined, expected: string) {
+  const candidatePair = extractCurrencyPair(candidate ?? "");
+  const expectedPair = extractCurrencyPair(expected);
+
+  if (!candidatePair || !expectedPair || candidatePair !== expectedPair) {
+    return false;
+  }
+
+  return hasOtcMarker(candidate ?? "") === hasOtcMarker(expected);
+}
+
+function extractCurrencyPair(value: string) {
+  const match = value.toUpperCase().match(/\b([A-Z]{3})\s*\/?\s*([A-Z]{3})\b/);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+function hasOtcMarker(value: string) {
+  return /\bOTC\b/i.test(value);
 }
 
 async function waitForPromotionalModalToClose(page: Page) {

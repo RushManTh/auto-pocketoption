@@ -20,6 +20,8 @@ type TargetChannel = {
   configured: string;
   peerId: string;
   lastMessageId: number;
+  canUseChannelDifference: boolean;
+  nextHistoryPollAt: number;
   pts?: number;
 };
 
@@ -96,7 +98,9 @@ async function resolveTargetChannels(client: TelegramClient, configuredChannelId
 
   for (const target of targets) {
     const peerId = await client.getPeerId(target);
-    const pts = await readChannelPts(client, peerId);
+    const entity = await client.getEntity(target);
+    const canUseChannelDifference = isChannelEntity(entity);
+    const pts = canUseChannelDifference ? await readChannelPts(client, peerId) : undefined;
     const latest = await client.getMessages(target, { limit: 1 });
     const lastMessageId = Math.max(0, ...latest.map((message) => message.id));
 
@@ -104,6 +108,8 @@ async function resolveTargetChannels(client: TelegramClient, configuredChannelId
       configured: target,
       peerId,
       lastMessageId,
+      canUseChannelDifference,
+      nextHistoryPollAt: 0,
       pts
     });
   }
@@ -120,7 +126,13 @@ function startPollingTargetChannels(client: TelegramClient, targets: TargetChann
     event: "telegram.polling.started",
     message: `Telegram channel difference polling started every ${env.TELEGRAM_POLL_INTERVAL_SECONDS}s`,
     metadata: {
-      channels: targets.map(({ configured, peerId, lastMessageId, pts }) => ({ configured, peerId, lastMessageId, pts }))
+      channels: targets.map(({ configured, peerId, lastMessageId, canUseChannelDifference, pts }) => ({
+        configured,
+        peerId,
+        lastMessageId,
+        canUseChannelDifference,
+        pts
+      }))
     }
   });
 
@@ -147,11 +159,16 @@ function startPollingTargetChannels(client: TelegramClient, targets: TargetChann
 
 async function pollTargetChannels(client: TelegramClient, targets: TargetChannel[]) {
   for (const target of targets) {
-    if (target.pts !== undefined) {
+    if (target.canUseChannelDifference && target.pts !== undefined) {
       await pollChannelDifference(client, target);
       continue;
     }
 
+    if (Date.now() < target.nextHistoryPollAt) {
+      continue;
+    }
+
+    target.nextHistoryPollAt = Date.now() + Math.max(env.TELEGRAM_POLL_INTERVAL_SECONDS * 1000, 5_000);
     const messages = await client.getMessages(target.configured, { limit: 10 });
     await handlePolledMessages(messages, target, "poll");
   }
@@ -208,6 +225,10 @@ function isTelegramTextMessage(message: unknown): message is TelegramTextMessage
 
   const candidate = message as Partial<TelegramTextMessage>;
   return typeof candidate.id === "number";
+}
+
+function isChannelEntity(entity: unknown) {
+  return !!entity && typeof entity === "object" && (entity as { className?: string }).className === "Channel";
 }
 
 async function handleTelegramMessage(message: TelegramTextMessage, channelId: string, source: "event" | "poll" | "difference") {
