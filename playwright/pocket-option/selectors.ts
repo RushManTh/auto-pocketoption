@@ -5,6 +5,8 @@ export const pocketOptionSelectors = {
   currentAsset: ".current-symbol",
   assetOption: ".alist__link",
   assetPickerModal: ".ReactModalPortal:has(.alist__link)",
+  assetSearchInput:
+    ".ReactModalPortal input[type='search'], .ReactModalPortal input[placeholder*='Search' i], .ReactModalPortal input[class*='search' i], .ReactModalPortal .search input, .ReactModalPortal input",
   amountInput: ".block--bet-amount input",
   expiryControl: ".block--expiration-inputs .control__value",
   expiryValue: ".block--expiration-inputs .value__val",

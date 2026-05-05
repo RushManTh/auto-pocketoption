@@ -88,6 +88,7 @@ export async function selectAsset(page: Page, asset: string) {
   await page.waitForTimeout(800);
 
   try {
+    await searchAsset(page, asset);
     await clickAssetOption(page, asset);
   } catch (error) {
     await page.screenshot({ path: `test-results/select-asset-failed-${Date.now()}.png`, fullPage: true }).catch(() => undefined);
@@ -229,6 +230,43 @@ async function clickAssetOption(page: Page, asset: string) {
   }
 
   throw new Error(`Asset option ${asset} was not found in Pocket Option asset picker`);
+}
+
+async function searchAsset(page: Page, asset: string) {
+  const searchInput = await findVisibleAssetSearchInput(page);
+  if (!searchInput) {
+    return;
+  }
+
+  await searchInput.click({ force: true, timeout: 1_500 }).catch(() => undefined);
+  await searchInput.fill(formatAssetSearchQuery(asset), { timeout: 1_500 }).catch(async () => {
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A").catch(() => undefined);
+    await page.keyboard.type(formatAssetSearchQuery(asset)).catch(() => undefined);
+  });
+  await page.waitForTimeout(700);
+}
+
+async function findVisibleAssetSearchInput(page: Page): Promise<Locator | null> {
+  const inputs = page.locator(pocketOptionSelectors.assetSearchInput);
+  const count = await inputs.count().catch(() => 0);
+
+  for (let index = 0; index < count; index += 1) {
+    const input = inputs.nth(index);
+    if (await input.isVisible().catch(() => false)) {
+      return input;
+    }
+  }
+
+  return null;
+}
+
+export function formatAssetSearchQuery(asset: string) {
+  const pair = extractCurrencyPair(asset);
+  if (!pair) {
+    return asset.trim();
+  }
+
+  return hasOtcMarker(asset) ? `${pair} OTC` : pair;
 }
 
 export function assetMatchesExpected(candidate: string | null | undefined, expected: string) {
