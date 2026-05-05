@@ -30,6 +30,7 @@ type CliOptions = {
 
 type TargetChannel = {
   configured: string;
+  inputEntity: Awaited<ReturnType<TelegramClient["getInputEntity"]>>;
   peerId: string;
   lastMessageId: number;
   canUseChannelDifference: boolean;
@@ -62,34 +63,50 @@ async function main() {
 
   try {
     const targets: TargetChannel[] = [];
+    const dialogs = await client.getDialogs({ limit: 200 });
 
     for (const channel of options.channels) {
-      const peerId = await client.getPeerId(channel);
-      const entity = (await client.getEntity(channel)) as TelegramEntitySummary;
-      const canUseChannelDifference = entity.className === "Channel";
-      const pts = canUseChannelDifference ? await readChannelPts(client, peerId) : undefined;
+      const resolved = await resolveTargetInput(client, channel, dialogs);
+      if (!resolved) {
+        console.log(
+          JSON.stringify(
+            {
+              check: "resolve_failed",
+              configured: channel
+            },
+            null,
+            2
+          )
+        );
+        continue;
+      }
+
+      const entity = resolved.entity as TelegramEntitySummary | undefined;
+      const canUseChannelDifference = entity?.className === "Channel" || isInputChannelEntity(resolved.inputEntity);
+      const pts = canUseChannelDifference ? readChannelPtsFromDialogs(dialogs, resolved.peerId) : undefined;
       console.log(
         JSON.stringify(
           {
             check: "resolved_channel",
             configured: channel,
-            peerId,
-            title: entity.title ?? entity.firstName ?? null,
-            username: entity.username ? `@${entity.username}` : null,
-            type: entity.className ?? null,
-            broadcast: entity.broadcast ?? null,
-            megagroup: entity.megagroup ?? null
+            peerId: resolved.peerId,
+            title: entity?.title ?? entity?.firstName ?? null,
+            username: entity?.username ? `@${entity.username}` : null,
+            type: entity?.className ?? null,
+            broadcast: entity?.broadcast ?? null,
+            megagroup: entity?.megagroup ?? null
           },
           null,
           2
         )
       );
 
-      const messages = await client.getMessages(channel, { limit: options.historyLimit });
+      const messages = await client.getMessages(resolved.inputEntity, { limit: options.historyLimit });
       const lastMessageId = Math.max(0, ...messages.map((message) => message.id));
       targets.push({
         configured: channel,
-        peerId,
+        inputEntity: resolved.inputEntity,
+        peerId: resolved.peerId,
         lastMessageId,
         canUseChannelDifference,
         nextHistoryPollAt: 0,
@@ -98,11 +115,11 @@ async function main() {
 
       console.log(
         JSON.stringify(
-          {
-            check: "history_read",
-            peerId,
-            readable: true,
-            messageCount: messages.length
+            {
+              check: "history_read",
+              peerId: resolved.peerId,
+              readable: true,
+              messageCount: messages.length
           },
           null,
           2
@@ -114,7 +131,7 @@ async function main() {
           JSON.stringify(
             {
               check: "history_message",
-              peerId,
+              peerId: resolved.peerId,
               messageId: message.id,
               date: message.date ? new Date(message.date * 1000).toISOString() : null,
               text: previewText(message.message)
@@ -302,7 +319,7 @@ async function pollForNewMessages(client: TelegramClient, targets: TargetChannel
     }
 
     target.nextHistoryPollAt = Date.now() + 5_000;
-    const messages = await client.getMessages(target.configured, { limit: 10 });
+    const messages = await client.getMessages(target.inputEntity, { limit: 10 });
     received += await reportNewMessages(messages, target, seen, "poll_message");
   }
 
@@ -312,7 +329,7 @@ async function pollForNewMessages(client: TelegramClient, targets: TargetChannel
 async function pollChannelDifference(client: TelegramClient, target: TargetChannel, seen: Set<string>) {
   const diff = await client.invoke(
     new Api.updates.GetChannelDifference({
-      channel: target.configured,
+      channel: target.inputEntity,
       filter: new Api.ChannelMessagesFilterEmpty(),
       pts: target.pts ?? 0,
       limit: 20
@@ -376,8 +393,7 @@ async function reportNewMessages(
   return received;
 }
 
-async function readChannelPts(client: TelegramClient, peerId: string) {
-  const dialogs = await client.getDialogs({ limit: 100 });
+function readChannelPtsFromDialogs(dialogs: Awaited<ReturnType<TelegramClient["getDialogs"]>>, peerId: string) {
   const dialog = dialogs.find((candidate) => candidate.id?.toString() === peerId);
   return dialog?.dialog?.pts;
 }
@@ -388,6 +404,46 @@ function isTelegramTextMessage(message: unknown): message is { id: number; date?
   }
 
   return typeof (message as { id?: unknown }).id === "number";
+}
+
+function isInputChannelEntity(entity: unknown) {
+  return !!entity && typeof entity === "object" && (entity as { className?: string }).className === "InputPeerChannel";
+}
+
+async function resolveTargetInput(
+  client: TelegramClient,
+  target: string,
+  dialogs: Awaited<ReturnType<TelegramClient["getDialogs"]>>
+) {
+  try {
+    const inputEntity = await client.getInputEntity(target);
+    const peerId = await client.getPeerId(inputEntity);
+    const dialog = dialogs.find((candidate) => candidate.id?.toString() === peerId);
+
+    return {
+      inputEntity,
+      peerId,
+      entity: dialog?.entity
+    };
+  } catch {
+    const peerId = await client.getPeerId(target).catch(() => null);
+    const dialog = peerId ? dialogs.find((candidate) => candidate.id?.toString() === peerId) : undefined;
+
+    if (!dialog) {
+      return null;
+    }
+
+    const dialogPeerId = dialog.id?.toString();
+    if (!dialogPeerId) {
+      return null;
+    }
+
+    return {
+      inputEntity: dialog.inputEntity,
+      peerId: dialogPeerId,
+      entity: dialog.entity
+    };
+  }
 }
 
 function markTargetSeen(targets: TargetChannel[], chatId: string, messageId: number) {

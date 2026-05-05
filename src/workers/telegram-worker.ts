@@ -18,6 +18,7 @@ type TelegramTextMessage = {
 
 type TargetChannel = {
   configured: string;
+  inputEntity: Awaited<ReturnType<TelegramClient["getInputEntity"]>>;
   peerId: string;
   lastMessageId: number;
   canUseChannelDifference: boolean;
@@ -46,6 +47,7 @@ async function main() {
   );
 
   await client.connect();
+  const targetFilteringEnabled = parseConfiguredChannelIds(env.TELEGRAM_CHANNEL_ID).length > 0;
   const targetChannels = await resolveTargetChannels(client, env.TELEGRAM_CHANNEL_ID);
   const targetChatIds = new Set(targetChannels.map((target) => target.peerId));
   logger.info("Telegram worker connected");
@@ -63,7 +65,7 @@ async function main() {
     const message = event.message;
     const eventChatId = readEventChatId(event);
 
-    if (targetChatIds.size > 0 && (!eventChatId || !targetChatIds.has(eventChatId))) {
+    if (targetFilteringEnabled && (!eventChatId || !targetChatIds.has(eventChatId))) {
       return;
     }
 
@@ -95,18 +97,31 @@ function readEventChatId(event: NewMessageEvent) {
 async function resolveTargetChannels(client: TelegramClient, configuredChannelId?: string): Promise<TargetChannel[]> {
   const targets = parseConfiguredChannelIds(configuredChannelId);
   const channels: TargetChannel[] = [];
+  const dialogs = await client.getDialogs({ limit: 200 });
 
   for (const target of targets) {
-    const peerId = await client.getPeerId(target);
-    const entity = await client.getEntity(target);
-    const canUseChannelDifference = isChannelEntity(entity);
-    const pts = canUseChannelDifference ? await readChannelPts(client, peerId) : undefined;
-    const latest = await client.getMessages(target, { limit: 1 });
+    const resolved = await resolveTargetInput(client, target, dialogs);
+    if (!resolved) {
+      await writeWorkerLog({
+        event: "telegram.target.skipped",
+        message: `Telegram target could not be resolved: ${target}`,
+        level: "warn",
+        metadata: {
+          target
+        }
+      });
+      continue;
+    }
+
+    const canUseChannelDifference = isChannelEntity(resolved.entity) || isInputChannelEntity(resolved.inputEntity);
+    const pts = canUseChannelDifference ? readChannelPtsFromDialogs(dialogs, resolved.peerId) : undefined;
+    const latest = await client.getMessages(resolved.inputEntity, { limit: 1 });
     const lastMessageId = Math.max(0, ...latest.map((message) => message.id));
 
     channels.push({
       configured: target,
-      peerId,
+      inputEntity: resolved.inputEntity,
+      peerId: resolved.peerId,
       lastMessageId,
       canUseChannelDifference,
       nextHistoryPollAt: 0,
@@ -169,7 +184,7 @@ async function pollTargetChannels(client: TelegramClient, targets: TargetChannel
     }
 
     target.nextHistoryPollAt = Date.now() + Math.max(env.TELEGRAM_POLL_INTERVAL_SECONDS * 1000, 5_000);
-    const messages = await client.getMessages(target.configured, { limit: 10 });
+    const messages = await client.getMessages(target.inputEntity, { limit: 10 });
     await handlePolledMessages(messages, target, "poll");
   }
 }
@@ -177,7 +192,7 @@ async function pollTargetChannels(client: TelegramClient, targets: TargetChannel
 async function pollChannelDifference(client: TelegramClient, target: TargetChannel) {
   const diff = await client.invoke(
     new Api.updates.GetChannelDifference({
-      channel: target.configured,
+      channel: target.inputEntity,
       filter: new Api.ChannelMessagesFilterEmpty(),
       pts: target.pts ?? 0,
       limit: 20
@@ -212,8 +227,7 @@ async function handlePolledMessages(messages: unknown[], target: TargetChannel, 
   }
 }
 
-async function readChannelPts(client: TelegramClient, peerId: string) {
-  const dialogs = await client.getDialogs({ limit: 100 });
+function readChannelPtsFromDialogs(dialogs: Awaited<ReturnType<TelegramClient["getDialogs"]>>, peerId: string) {
   const dialog = dialogs.find((candidate) => candidate.id?.toString() === peerId);
   return dialog?.dialog?.pts;
 }
@@ -229,6 +243,55 @@ function isTelegramTextMessage(message: unknown): message is TelegramTextMessage
 
 function isChannelEntity(entity: unknown) {
   return !!entity && typeof entity === "object" && (entity as { className?: string }).className === "Channel";
+}
+
+function isInputChannelEntity(entity: unknown) {
+  return !!entity && typeof entity === "object" && (entity as { className?: string }).className === "InputPeerChannel";
+}
+
+async function resolveTargetInput(
+  client: TelegramClient,
+  target: string,
+  dialogs: Awaited<ReturnType<TelegramClient["getDialogs"]>>
+) {
+  try {
+    const inputEntity = await client.getInputEntity(target);
+    const peerId = await client.getPeerId(inputEntity);
+    const dialog = dialogs.find((candidate) => candidate.id?.toString() === peerId);
+
+    return {
+      inputEntity,
+      peerId,
+      entity: dialog?.entity
+    };
+  } catch (error) {
+    const peerId = await client.getPeerId(target).catch(() => null);
+    const dialog = peerId ? dialogs.find((candidate) => candidate.id?.toString() === peerId) : undefined;
+
+    if (!dialog) {
+      await writeWorkerLog({
+        event: "telegram.target.resolve_failed",
+        message: error instanceof Error ? error.message : `Could not resolve Telegram target ${target}`,
+        level: "warn",
+        metadata: {
+          target,
+          peerId
+        }
+      });
+      return null;
+    }
+
+    const dialogPeerId = dialog.id?.toString();
+    if (!dialogPeerId) {
+      return null;
+    }
+
+    return {
+      inputEntity: dialog.inputEntity,
+      peerId: dialogPeerId,
+      entity: dialog.entity
+    };
+  }
 }
 
 async function handleTelegramMessage(message: TelegramTextMessage, channelId: string, source: "event" | "poll" | "difference") {
