@@ -36,5 +36,20 @@ describe("nextSignalStatus", () => {
       )
     ).toBe("GO_RECEIVED");
   });
-});
 
+  it("rejects no confirmation while waiting", () => {
+    expect(
+      nextSignalStatus(
+        {
+          type: "CANCEL",
+          confidence: 1,
+          sourceText: "No"
+        },
+        {
+          currentStatus: "WAITING_GO",
+          waitForGo: true
+        }
+      )
+    ).toBe("REJECTED");
+  });
+});

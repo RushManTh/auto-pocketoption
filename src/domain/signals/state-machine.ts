@@ -8,6 +8,8 @@ export function nextSignalStatus(parsed: ParsedSignal, context: SignalContext): 
       return parsed.waitForGo || context.waitForGo ? "WAITING_GO" : "ENTRY_RECEIVED";
     case "GO":
       return context.currentStatus === "WAITING_GO" ? "GO_RECEIVED" : "REJECTED";
+    case "CANCEL":
+      return "REJECTED";
     case "RESULT":
       return parsed.result === "WIN" ? "WON" : "LOST";
     default:
@@ -18,4 +20,3 @@ export function nextSignalStatus(parsed: ParsedSignal, context: SignalContext): 
 export function canCreateTradeIntent(status: SignalStatus) {
   return status === "ENTRY_RECEIVED" || status === "GO_RECEIVED";
 }
-

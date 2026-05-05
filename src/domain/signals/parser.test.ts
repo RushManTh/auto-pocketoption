@@ -43,6 +43,56 @@ describe("parseSignalMessage", () => {
     });
   });
 
+  it("parses no as a cancel confirmation", () => {
+    expect(parseSignalMessage("No")).toMatchObject({
+      type: "CANCEL",
+      confidence: 1
+    });
+  });
+
+  it("parses a wait confirm entry signal", () => {
+    const parsed = parseSignalMessage("AUD USD PUT 5 MIN WAIT CONFIRM");
+
+    expect(parsed).toMatchObject({
+      type: "ENTRY",
+      asset: "AUD/USD",
+      direction: "PUT",
+      expirySeconds: 300,
+      waitForGo: true
+    });
+  });
+
+  it("parses cal shorthand as call in a wait confirm entry signal", () => {
+    const parsed = parseSignalMessage("EUR JPY CAL 5 MIN WAIT CONFIRM");
+
+    expect(parsed).toMatchObject({
+      type: "ENTRY",
+      asset: "EUR/JPY",
+      direction: "CALL",
+      expirySeconds: 300,
+      waitForGo: true
+    });
+  });
+
+  it("parses usd jpy cal wait confirm entry signal", () => {
+    const parsed = parseSignalMessage("USD JPY CAL 5 MIN WAIT CONFIRM");
+
+    expect(parsed).toMatchObject({
+      type: "ENTRY",
+      asset: "USD/JPY",
+      direction: "CALL",
+      expirySeconds: 300,
+      waitForGo: true
+    });
+  });
+
+  it("parses start soon text as setup warm up", () => {
+    expect(parseSignalMessage("Hello Traders! We will start soon! After 30 minut")).toMatchObject({
+      type: "SETUP",
+      confidence: 0.9
+    });
+  });
+
   it("parses setup text", () => {
     const parsed = parseSignalMessage("5min Candle\n5min expiry\nwait for go\nWithout martingale");
 

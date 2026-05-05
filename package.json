@@ -18,6 +18,7 @@
     "prisma:migrate": "prisma migrate dev",
     "telegram:session": "tsx scripts/create-telegram-session.ts",
     "telegram:check-bot": "tsx scripts/check-telegram-bot.ts",
+    "telegram:check-channel": "tsx scripts/check-telegram-channel-access.ts",
     "telegram:list-dialogs": "tsx scripts/list-telegram-dialogs.ts",
     "telegram:test-signal": "tsx scripts/send-test-signal.ts",
     "pocket:login": "tsx scripts/pocket-option-login.ts",

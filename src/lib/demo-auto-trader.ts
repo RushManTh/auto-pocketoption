@@ -90,6 +90,42 @@ export async function handleDemoAutoTrade(input: DemoAutoTradeInput) {
     return executeSignal(candidate.id, "GO", strategy);
   }
 
+  if (input.parsed.type === "CANCEL") {
+    const candidate = await findLatestEntryWaitingForGo();
+    if (!candidate) {
+      await writeWorkerLog({
+        event: "trade.cancel.skipped",
+        message: "No recent entry signal is waiting for NO",
+        level: "warn",
+        entityId: input.signalId
+      });
+      return skip("No recent entry signal is waiting for NO");
+    }
+
+    await prisma.signal.update({
+      where: {
+        id: candidate.id
+      },
+      data: {
+        status: "REJECTED",
+        goMessageId: input.signalId,
+        goReceivedAt: new Date()
+      }
+    });
+
+    await writeWorkerLog({
+      event: "trade.cancelled",
+      message: `Trade signal cancelled by NO: ${candidate.asset} ${candidate.direction}`,
+      level: "warn",
+      entityId: candidate.id,
+      metadata: {
+        cancelSignalId: input.signalId
+      }
+    });
+
+    return skip("Pending trade signal cancelled by NO");
+  }
+
   return skip(`Signal type ${input.parsed.type} cannot trigger ${strategy.label.toLowerCase()} execution`);
 }
 

@@ -1,4 +1,4 @@
-export type SignalMessageType = "SETUP" | "ENTRY" | "GO" | "RESULT" | "UNKNOWN";
+export type SignalMessageType = "SETUP" | "ENTRY" | "GO" | "CANCEL" | "RESULT" | "UNKNOWN";
 
 export type Direction = "CALL" | "PUT";
 
@@ -35,4 +35,3 @@ export type SignalContext = {
   currentStatus: SignalStatus;
   waitForGo: boolean;
 };
-

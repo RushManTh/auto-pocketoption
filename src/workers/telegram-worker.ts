@@ -1,11 +1,27 @@
-import { TelegramClient } from "telegram";
+import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
-import { NewMessage } from "telegram/events";
+import { NewMessage, type NewMessageEvent } from "telegram/events";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { handleDemoAutoTrade } from "@/lib/demo-auto-trader";
 import { persistTelegramSignal } from "@/lib/signal-persistence";
 import { writeWorkerLog } from "@/lib/worker-log";
+
+type TelegramTextMessage = {
+  id: number;
+  date?: number;
+  message?: string;
+  peerId?: {
+    className?: string;
+  };
+};
+
+type TargetChannel = {
+  configured: string;
+  peerId: string;
+  lastMessageId: number;
+  pts?: number;
+};
 
 async function main() {
   if (!env.TELEGRAM_API_ID || !env.TELEGRAM_API_HASH || !env.TELEGRAM_SESSION) {
@@ -28,79 +44,32 @@ async function main() {
   );
 
   await client.connect();
+  const targetChannels = await resolveTargetChannels(client, env.TELEGRAM_CHANNEL_ID);
+  const targetChatIds = new Set(targetChannels.map((target) => target.peerId));
   logger.info("Telegram worker connected");
   await writeWorkerLog({
     event: "telegram.connected",
     message: "Telegram worker connected",
     metadata: {
-      channelId: env.TELEGRAM_CHANNEL_ID
+      channelId: env.TELEGRAM_CHANNEL_ID,
+      resolvedChannelIds: [...targetChatIds],
+      pollIntervalSeconds: env.TELEGRAM_POLL_INTERVAL_SECONDS
     }
   });
 
   client.addEventHandler(async (event) => {
     const message = event.message;
-    const text = message.message;
+    const eventChatId = readEventChatId(event);
 
-    if (!text) {
+    if (targetChatIds.size > 0 && (!eventChatId || !targetChatIds.has(eventChatId))) {
       return;
     }
 
-    const channelId = env.TELEGRAM_CHANNEL_ID ?? "unknown";
-    const telegramMessageId = String(message.id);
-    await writeWorkerLog({
-      event: "signal.received",
-      message: `Telegram message received: ${text.slice(0, 120)}`,
-      entityId: telegramMessageId,
-      metadata: {
-        channelId,
-        telegramMessageId
-      }
-    });
+    markTargetSeen(targetChannels, eventChatId, message.id);
+    await handleTelegramMessage(message, eventChatId ?? env.TELEGRAM_CHANNEL_ID ?? "unknown", "event");
+  }, new NewMessage({}));
 
-    const persisted = await persistTelegramSignal({
-      telegramMessageId,
-      channelId,
-      text,
-      messageDate: toTelegramMessageDate(message.date),
-      rawPayload: {
-        id: message.id,
-        date: message.date
-      }
-    });
-
-    logger.info(
-      {
-        messageId: message.id,
-        signalId: persisted.signal.id,
-        signalCreated: persisted.created,
-        parsed: persisted.parsed
-      },
-      "Telegram signal parsed"
-    );
-    await writeWorkerLog({
-      event: "signal.parsed",
-      message: `Parsed signal as ${persisted.parsed.type}`,
-      entityId: persisted.signal.id,
-      metadata: {
-        parsed: persisted.parsed,
-        signalCreated: persisted.created
-      }
-    });
-
-    const autoTrade = await handleDemoAutoTrade({
-      parsed: persisted.parsed,
-      signalId: persisted.signal.id,
-      signalCreated: persisted.created
-    });
-
-    logger.info(
-      {
-        messageId: message.id,
-        autoTrade
-      },
-      "Telegram signal auto trade handled"
-    );
-  }, new NewMessage({ chats: env.TELEGRAM_CHANNEL_ID ? [env.TELEGRAM_CHANNEL_ID] : undefined }));
+  startPollingTargetChannels(client, targetChannels);
 }
 
 main().catch((error) => {
@@ -115,4 +84,216 @@ main().catch((error) => {
 
 function toTelegramMessageDate(date?: number) {
   return date ? new Date(date * 1000) : new Date();
+}
+
+function readEventChatId(event: NewMessageEvent) {
+  return event.chatId?.toString();
+}
+
+async function resolveTargetChannels(client: TelegramClient, configuredChannelId?: string): Promise<TargetChannel[]> {
+  const targets = parseConfiguredChannelIds(configuredChannelId);
+  const channels: TargetChannel[] = [];
+
+  for (const target of targets) {
+    const peerId = await client.getPeerId(target);
+    const pts = await readChannelPts(client, peerId);
+    const latest = await client.getMessages(target, { limit: 1 });
+    const lastMessageId = Math.max(0, ...latest.map((message) => message.id));
+
+    channels.push({
+      configured: target,
+      peerId,
+      lastMessageId,
+      pts
+    });
+  }
+
+  return channels;
+}
+
+function startPollingTargetChannels(client: TelegramClient, targets: TargetChannel[]) {
+  if (targets.length === 0) {
+    return;
+  }
+
+  void writeWorkerLog({
+    event: "telegram.polling.started",
+    message: `Telegram channel difference polling started every ${env.TELEGRAM_POLL_INTERVAL_SECONDS}s`,
+    metadata: {
+      channels: targets.map(({ configured, peerId, lastMessageId, pts }) => ({ configured, peerId, lastMessageId, pts }))
+    }
+  });
+
+  let polling = false;
+  setInterval(() => {
+    if (polling) {
+      return;
+    }
+
+    polling = true;
+    pollTargetChannels(client, targets)
+      .catch((error) => {
+        void writeWorkerLog({
+          event: "telegram.polling.failed",
+          message: error instanceof Error ? error.message : "Telegram polling failed",
+          level: "warn"
+        });
+      })
+      .finally(() => {
+        polling = false;
+      });
+  }, env.TELEGRAM_POLL_INTERVAL_SECONDS * 1000);
+}
+
+async function pollTargetChannels(client: TelegramClient, targets: TargetChannel[]) {
+  for (const target of targets) {
+    if (target.pts !== undefined) {
+      await pollChannelDifference(client, target);
+      continue;
+    }
+
+    const messages = await client.getMessages(target.configured, { limit: 10 });
+    await handlePolledMessages(messages, target, "poll");
+  }
+}
+
+async function pollChannelDifference(client: TelegramClient, target: TargetChannel) {
+  const diff = await client.invoke(
+    new Api.updates.GetChannelDifference({
+      channel: target.configured,
+      filter: new Api.ChannelMessagesFilterEmpty(),
+      pts: target.pts ?? 0,
+      limit: 20
+    })
+  );
+
+  if (diff.className === "updates.ChannelDifference" || diff.className === "updates.ChannelDifferenceEmpty") {
+    target.pts = diff.pts;
+  }
+
+  if (diff.className === "updates.ChannelDifferenceTooLong") {
+    const dialogPts = "pts" in diff.dialog ? diff.dialog.pts : undefined;
+    target.pts = dialogPts ?? target.pts;
+    await handlePolledMessages(diff.messages, target, "difference");
+    return;
+  }
+
+  if (diff.className === "updates.ChannelDifference") {
+    await handlePolledMessages(diff.newMessages, target, "difference");
+  }
+}
+
+async function handlePolledMessages(messages: unknown[], target: TargetChannel, source: "poll" | "difference") {
+  const newMessages = messages
+    .filter(isTelegramTextMessage)
+    .filter((message) => message.id > target.lastMessageId)
+    .sort((a, b) => a.id - b.id);
+
+  for (const message of newMessages) {
+    target.lastMessageId = Math.max(target.lastMessageId, message.id);
+    await handleTelegramMessage(message, target.peerId, source);
+  }
+}
+
+async function readChannelPts(client: TelegramClient, peerId: string) {
+  const dialogs = await client.getDialogs({ limit: 100 });
+  const dialog = dialogs.find((candidate) => candidate.id?.toString() === peerId);
+  return dialog?.dialog?.pts;
+}
+
+function isTelegramTextMessage(message: unknown): message is TelegramTextMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const candidate = message as Partial<TelegramTextMessage>;
+  return typeof candidate.id === "number";
+}
+
+async function handleTelegramMessage(message: TelegramTextMessage, channelId: string, source: "event" | "poll" | "difference") {
+  const text = message.message;
+
+  if (!text) {
+    return;
+  }
+
+  const telegramMessageId = String(message.id);
+  await writeWorkerLog({
+    event: "signal.received",
+    message: `Telegram message received: ${text.slice(0, 120)}`,
+    entityId: telegramMessageId,
+    metadata: {
+      channelId,
+      telegramMessageId,
+      source
+    }
+  });
+
+  const persisted = await persistTelegramSignal({
+    telegramMessageId,
+    channelId,
+    text,
+    messageDate: toTelegramMessageDate(message.date),
+    rawPayload: {
+      id: message.id,
+      date: message.date,
+      chatId: channelId,
+      peerId: message.peerId?.className,
+      source
+    }
+  });
+
+  logger.info(
+    {
+      messageId: message.id,
+      signalId: persisted.signal.id,
+      signalCreated: persisted.created,
+      parsed: persisted.parsed,
+      source
+    },
+    "Telegram signal parsed"
+  );
+  await writeWorkerLog({
+    event: "signal.parsed",
+    message: `Parsed signal as ${persisted.parsed.type}`,
+    entityId: persisted.signal.id,
+    metadata: {
+      parsed: persisted.parsed,
+      signalCreated: persisted.created,
+      source
+    }
+  });
+
+  const autoTrade = await handleDemoAutoTrade({
+    parsed: persisted.parsed,
+    signalId: persisted.signal.id,
+    signalCreated: persisted.created
+  });
+
+  logger.info(
+    {
+      messageId: message.id,
+      autoTrade,
+      source
+    },
+    "Telegram signal auto trade handled"
+  );
+}
+
+function markTargetSeen(targets: TargetChannel[], chatId: string | undefined, messageId: number) {
+  if (!chatId) {
+    return;
+  }
+
+  const target = targets.find((candidate) => candidate.peerId === chatId);
+  if (target) {
+    target.lastMessageId = Math.max(target.lastMessageId, messageId);
+  }
+}
+
+function parseConfiguredChannelIds(configuredChannelId?: string) {
+  return (configuredChannelId ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }

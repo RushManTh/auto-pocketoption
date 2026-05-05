@@ -35,13 +35,27 @@ const envSchema = z.object({
   TELEGRAM_API_HASH: optionalNonEmptyString,
   TELEGRAM_SESSION: optionalNonEmptyString,
   TELEGRAM_CHANNEL_ID: optionalNonEmptyString,
+  TELEGRAM_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(1),
   TELEGRAM_BOT_TOKEN: optionalNonEmptyString,
   TELEGRAM_TEST_CHAT_ID: optionalNonEmptyString,
-  EXECUTION_MODE: z.enum(["paper", "manual", "demo", "live_playwright", "official_api", "live"]).default("paper"),
+  EXECUTION_MODE: z
+    .enum([
+      "paper",
+      "manual",
+      "demo",
+      "live_playwright",
+      "official_api",
+      "live",
+    ])
+    .default("paper"),
   AUTO_TRADE_ENABLED: booleanFromEnv.default(false),
   DEMO_AUTO_TRADE_ENABLED: booleanFromEnv.default(false),
   DEMO_AUTO_TRADE_REQUIRE_GO: booleanFromEnv.default(true),
-  DEMO_AUTO_TRADE_ENTRY_LOOKBACK_SECONDS: z.coerce.number().int().positive().default(300),
+  DEMO_AUTO_TRADE_ENTRY_LOOKBACK_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(300),
   ENABLE_LIVE_PLAYWRIGHT_TRADING: booleanFromEnv.default(false),
   LIVE_TRADING_CONFIRMATION_TEXT: optionalNonEmptyString,
   LIVE_REQUIRE_MANUAL_APPROVAL: booleanFromEnv.default(true),
@@ -51,18 +65,29 @@ const envSchema = z.object({
   MAX_DAILY_LOSS: z.coerce.number().nonnegative().default(3),
   MAX_CONSECUTIVE_LOSSES: z.coerce.number().int().nonnegative().default(1),
   SIGNAL_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(60),
-  POCKET_OPTION_PROFILE_DIR: z.string().default("./playwright/pocket-option/profile"),
-  POCKET_OPTION_BASE_URL: z.string().url().default("https://pocketoption.com/cabinet/"),
-  POCKET_OPTION_BROWSER_CHANNEL: z.enum(["chrome", "msedge", "chromium"]).optional(),
+  POCKET_OPTION_PROFILE_DIR: z
+    .string()
+    .default("./playwright/pocket-option/profile"),
+  POCKET_OPTION_BASE_URL: z
+    .string()
+    .url()
+    .default("https://pocketoption.com/cabinet/"),
+  POCKET_OPTION_BROWSER_CHANNEL: z
+    .enum(["chrome", "msedge", "chromium"])
+    .optional(),
   POCKET_OPTION_HEADLESS: booleanFromEnv.default(true),
   POCKET_OPTION_DEMO_TRADE_AMOUNT: z.coerce.number().positive().default(10),
   POCKET_OPTION_LIVE_TRADE_AMOUNT: z.coerce.number().positive().default(1),
   POCKET_OPTION_LIVE_MAX_TRADE_AMOUNT: z.coerce.number().positive().default(1),
   POCKET_OPTION_LIVE_ACCOUNT_TEXT: optionalNonEmptyString,
   POCKET_OPTION_ENFORCE_EXPIRY_MATCH: booleanFromEnv.default(false),
-  POCKET_OPTION_IDLE_CLOSE_SECONDS: z.coerce.number().int().positive().default(3600),
+  POCKET_OPTION_IDLE_CLOSE_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
   POCKET_OPTION_OFFICIAL_API_TOKEN: optionalNonEmptyString,
-  POCKET_OPTION_OFFICIAL_API_BASE_URL: optionalUrl
+  POCKET_OPTION_OFFICIAL_API_BASE_URL: optionalUrl,
 });
 
 export const env = envSchema.parse(process.env);
