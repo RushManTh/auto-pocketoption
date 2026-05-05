@@ -7,8 +7,8 @@ import { assertLivePlaywrightGuard } from "@/lib/live-trading-guard";
 import { pocketOptionBrowserOptions } from "@/lib/pocket-option-browser";
 import { writeWorkerLog } from "@/lib/worker-log";
 import {
+  assertLiveAccount,
   clickDirection,
-  ensureLiveAccount,
   ensureSessionReady,
   openCabinet,
   readAccountMode,
@@ -220,20 +220,34 @@ class PocketOptionLiveSession {
 
     const page = this.page && !this.page.isClosed() ? this.page : await this.context.newPage();
     this.page = page;
+    const tradeUrl = env.POCKET_OPTION_LIVE_TRADE_URL;
+
+    if (await this.isExistingLivePageReady(page)) {
+      await writeWorkerLog({
+        event: "live.pocket-option.page.reused",
+        message: "Reusing existing Pocket Option real-money trade page",
+        metadata: {
+          reason,
+          url: page.url(),
+          account: await readAccountMode(page)
+        }
+      });
+      return page;
+    }
 
     await writeWorkerLog({
       event: "live.pocket-option.page.opening",
       message: "Playwright is opening the Pocket Option page for real-money trading",
       metadata: {
         reason,
-        url: env.POCKET_OPTION_BASE_URL
+        url: tradeUrl
       }
     });
 
     try {
-      await openCabinet(page, env.POCKET_OPTION_BASE_URL);
+      await openCabinet(page, tradeUrl);
       await ensureSessionReady(page);
-      await ensureLiveAccount(page, env.POCKET_OPTION_LIVE_ACCOUNT_TEXT ?? "");
+      await assertLiveAccount(page, env.POCKET_OPTION_LIVE_ACCOUNT_TEXT);
     } catch (error) {
       await writeWorkerLog({
         event: "live.pocket-option.page.failed",
@@ -241,7 +255,7 @@ class PocketOptionLiveSession {
         level: "error",
         metadata: {
           reason,
-          url: env.POCKET_OPTION_BASE_URL
+          url: tradeUrl
         }
       });
       throw error;
@@ -252,12 +266,26 @@ class PocketOptionLiveSession {
       message: "Playwright opened Pocket Option and confirmed the real-money account",
       metadata: {
         reason,
-        url: env.POCKET_OPTION_BASE_URL,
+        url: tradeUrl,
         account: await readAccountMode(page)
       }
     });
 
     return page;
+  }
+
+  private async isExistingLivePageReady(page: Page) {
+    if (!/cabinet/i.test(page.url())) {
+      return false;
+    }
+
+    try {
+      await ensureSessionReady(page);
+      await assertLiveAccount(page, env.POCKET_OPTION_LIVE_ACCOUNT_TEXT);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async closeNow(reason: string) {

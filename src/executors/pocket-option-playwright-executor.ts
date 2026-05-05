@@ -7,8 +7,8 @@ import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { pocketOptionBrowserOptions } from "@/lib/pocket-option-browser";
 import {
+  assertDemoAccount,
   clickDirection,
-  ensureDemoAccount,
   ensureSessionReady,
   openCabinet,
   readAccountMode,
@@ -40,9 +40,9 @@ export class PocketOptionPlaywrightExecutor implements TradeExecutor {
     const page = context.pages()[0] ?? (await context.newPage());
 
     try {
-      await openCabinet(page, env.POCKET_OPTION_BASE_URL);
+      await openCabinet(page, env.POCKET_OPTION_DEMO_TRADE_URL);
       await ensureSessionReady(page);
-      await ensureDemoAccount(page);
+      await assertDemoAccount(page);
       await selectAsset(page, intent.asset);
       await setTradeAmount(page, intent.amount);
       await setExpiry(page, intent.expirySeconds);

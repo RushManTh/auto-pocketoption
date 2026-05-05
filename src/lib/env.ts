@@ -72,6 +72,14 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://pocketoption.com/cabinet/"),
+  POCKET_OPTION_DEMO_TRADE_URL: z
+    .string()
+    .url()
+    .default("https://pocketoption.com/en/cabinet/demo-quick-high-low/"),
+  POCKET_OPTION_LIVE_TRADE_URL: z
+    .string()
+    .url()
+    .default("https://pocketoption.com/en/cabinet/quick-high-low"),
   POCKET_OPTION_BROWSER_CHANNEL: z
     .enum(["chrome", "msedge", "chromium"])
     .optional(),

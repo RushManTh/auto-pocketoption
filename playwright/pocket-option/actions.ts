@@ -76,6 +76,29 @@ export function isDemoAccount(accountModeText: string) {
   return /QT\s+Demo/i.test(accountModeText);
 }
 
+export async function assertDemoAccount(page: Page) {
+  const accountMode = await readAccountMode(page);
+  if (!isDemoAccount(accountMode)) {
+    throw new Error(`Demo trading page is not active: ${accountMode || "unknown"}`);
+  }
+}
+
+export async function assertLiveAccount(page: Page, accountText?: string) {
+  const accountMode = await readAccountMode(page);
+  if (!accountMode) {
+    throw new Error("Could not confirm live account mode");
+  }
+
+  if (isDemoAccount(accountMode)) {
+    throw new Error(`Live trading page is not active: ${accountMode}`);
+  }
+
+  const expectedAccount = accountText?.trim();
+  if (expectedAccount && !normalize(accountMode).includes(normalize(expectedAccount))) {
+    throw new Error(`Could not confirm live account "${expectedAccount}". Current account: ${accountMode}`);
+  }
+}
+
 export async function selectAsset(page: Page, asset: string) {
   const currentAsset = await page.locator(pocketOptionSelectors.currentAsset).first().innerText().catch(() => "");
 

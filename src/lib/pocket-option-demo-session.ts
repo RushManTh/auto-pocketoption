@@ -6,9 +6,9 @@ import { env } from "@/lib/env";
 import { pocketOptionBrowserOptions } from "@/lib/pocket-option-browser";
 import { writeWorkerLog } from "@/lib/worker-log";
 import {
+  assertDemoAccount,
   clickDirection,
   closePromotionalModals,
-  ensureDemoAccount,
   ensureSessionReady,
   openCabinet,
   readAccountMode,
@@ -213,10 +213,13 @@ class PocketOptionDemoSession {
     const page = this.page && !this.page.isClosed() ? this.page : await this.context.newPage();
     this.page = page;
 
-    if (options?.preferExisting && (await this.isExistingDemoPageReady(page))) {
+    const existingPageReady = await this.isExistingDemoPageReady(page);
+    if (existingPageReady) {
       await writeWorkerLog({
         event: "pocket-option.page.reused",
-        message: "Reusing prepared Pocket Option page for demo execution",
+        message: options?.preferExisting
+          ? "Reusing prepared Pocket Option page for demo execution"
+          : "Reusing existing Pocket Option demo trade page",
         metadata: {
           reason,
           url: page.url()
@@ -225,19 +228,21 @@ class PocketOptionDemoSession {
       return page;
     }
 
+    const tradeUrl = env.POCKET_OPTION_DEMO_TRADE_URL;
+
     await writeWorkerLog({
       event: "pocket-option.page.opening",
       message: "Playwright is opening the Pocket Option page",
       metadata: {
         reason,
-        url: env.POCKET_OPTION_BASE_URL
+        url: tradeUrl
       }
     });
 
     try {
-      await openCabinet(page, env.POCKET_OPTION_BASE_URL);
+      await openCabinet(page, tradeUrl);
       await ensureSessionReady(page);
-      await ensureDemoAccount(page);
+      await assertDemoAccount(page);
     } catch (error) {
       await writeWorkerLog({
         event: "pocket-option.page.failed",
@@ -245,7 +250,7 @@ class PocketOptionDemoSession {
         level: "error",
         metadata: {
           reason,
-          url: env.POCKET_OPTION_BASE_URL
+          url: tradeUrl
         }
       });
       throw error;
@@ -256,7 +261,7 @@ class PocketOptionDemoSession {
       message: "Playwright opened the Pocket Option page and demo account is ready",
       metadata: {
         reason,
-        url: env.POCKET_OPTION_BASE_URL
+        url: tradeUrl
       }
     });
 
